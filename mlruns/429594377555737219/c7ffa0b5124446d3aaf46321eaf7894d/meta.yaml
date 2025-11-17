@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/user/BMW Projects/auto-predictive-maintenance-system/mlruns/429594377555737219/c7ffa0b5124446d3aaf46321eaf7894d/artifacts
+end_time: 1763194025166
+entry_point_name: ''
+experiment_id: '429594377555737219'
+lifecycle_stage: active
+run_id: c7ffa0b5124446d3aaf46321eaf7894d
+run_name: xgb_baseline_FD001
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1763194024986
+status: 3
+tags: []
+user_id: user

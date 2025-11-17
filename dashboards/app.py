@@ -1,0 +1,200 @@
+# dashboards/app.py
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+import requests
+import joblib
+from pathlib import Path
+from typing import Tuple, List
+
+# ----------------------
+# CONFIG
+# ----------------------
+st.set_page_config(page_title="Automotive Health Monitoring", layout="wide", initial_sidebar_state="expanded")
+
+ROOT = Path.cwd()
+PROC_DIR = ROOT / "data" / "processed" / "for_model"
+API_URL = "http://127.0.0.1:8000/predict"   # change if your API is hosted elsewhere
+SEQ_LEN = 50  # must match model training
+
+DARK_BG = "#0f1720"
+CARD_BG = "#0b1220"
+ACCENT = "#0ea5a0"  # teal accent
+
+# ----------------------
+# Helpers
+# ----------------------
+@st.cache_data
+def list_datasets(proc_dir: Path) -> List[str]:
+    files = list(proc_dir.glob("*_train_labeled.csv"))
+    datasets = [p.stem.split("_")[0] for p in files]
+    return sorted(datasets)
+
+@st.cache_data
+def load_dataset_csv(dataset: str, kind: str = "test") -> pd.DataFrame:
+    path = PROC_DIR / f"{dataset}_{kind}_labeled.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"{path} not found.")
+    return pd.read_csv(path)
+
+def get_units(df: pd.DataFrame) -> List[int]:
+    return sorted(df["unit"].unique())
+
+def build_sequence_for_unit(df_unit: pd.DataFrame, last_n: int = SEQ_LEN) -> np.ndarray:
+    df_unit = df_unit.sort_values("cycle").reset_index(drop=True)
+    feature_cols = [c for c in df_unit.columns if (c.startswith("op_setting") or c.startswith("sensor_") or "_mean" in c or "_std" in c or "_min" in c or "_max" in c)]
+    seq = df_unit[feature_cols].to_numpy(dtype=np.float32)
+    if seq.shape[0] < last_n:
+        pad_len = last_n - seq.shape[0]
+        pad = np.zeros((pad_len, seq.shape[1]), dtype=np.float32)
+        seq = np.vstack([pad, seq])
+    else:
+        seq = seq[-last_n:]
+    return seq, feature_cols
+
+def call_predict_api(sequence: np.ndarray) -> float:
+    payload = {"sequence": sequence.tolist()}
+    resp = requests.post(API_URL, json=payload, timeout=20)
+    resp.raise_for_status()
+    data = resp.json()
+    return float(data["predicted_rul"])
+
+def compute_anomaly_flags(df_unit: pd.DataFrame, sensor_cols: List[str], z_thresh: float = 3.0) -> pd.DataFrame:
+    # compute z-score per sensor using rolling mean/std and flag
+    df = df_unit.copy().sort_values("cycle").reset_index(drop=True)
+    for s in sensor_cols:
+        df[f"{s}_z"] = (df[s] - df[s].rolling(30, min_periods=1).mean()) / (df[s].rolling(30, min_periods=1).std().replace(0, 1))
+        df[f"{s}_anomaly"] = df[f"{s}_z"].abs() > z_thresh
+    return df
+
+# ----------------------
+# Sidebar: Controls
+# ----------------------
+st.sidebar.markdown("<h2 style='color: white;'>Automotive Health Dashboard</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("---")
+
+datasets = list_datasets(PROC_DIR)
+dataset = st.sidebar.selectbox("Select dataset", datasets, index=0)
+mode = st.sidebar.radio("Mode", ["Explore test set", "Upload CSV (simulate)"])
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Model API**")
+st.sidebar.write(f"`{API_URL}`")
+if st.sidebar.button("Change API URL"):
+    new = st.sidebar.text_input("New API URL", value=API_URL)
+    if new:
+        st.experimental_set_query_params(api=new)
+
+# ----------------------
+# Main layout
+# ----------------------
+st.markdown(f"<div style='background:{CARD_BG}; padding: 12px; border-radius: 8px'>"
+            f"<h1 style='color: {ACCENT}; margin: 0'>Automotive Health Monitoring — {dataset}</h1>"
+            f"<p style='color: #9AA5B1; margin: 0'>Sequence model RUL prediction · Streamlined demo</p>"
+            f"</div>", unsafe_allow_html=True)
+
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.subheader("Engine selection & Sensor view")
+    if mode == "Explore test set":
+        df_test = load_dataset_csv(dataset, "test")
+        units = get_units(df_test)
+        unit = st.selectbox("Select unit (engine)", units, index=0)
+        df_unit = df_test[df_test["unit"] == unit].sort_values("cycle")
+        seq, feature_cols = build_sequence_for_unit(df_unit, last_n=SEQ_LEN)
+    else:
+        uploaded = st.file_uploader("Upload CSV (must contain unit, cycle, sensor_* columns)", type=["csv"])
+        if uploaded:
+            df_uploaded = pd.read_csv(uploaded)
+            uploaded_unit_ids = sorted(df_uploaded["unit"].unique())
+            unit = uploaded_unit_ids[0]
+            df_unit = df_uploaded[df_uploaded["unit"] == unit].sort_values("cycle")
+            seq, feature_cols = build_sequence_for_unit(df_unit, last_n=SEQ_LEN)
+        else:
+            st.info("Upload a CSV to simulate telematics. Using a sample test unit for preview.")
+            df_test = load_dataset_csv(dataset, "test")
+            units = get_units(df_test)
+            unit = units[0]
+            df_unit = df_test[df_test["unit"] == unit].sort_values("cycle")
+            seq, feature_cols = build_sequence_for_unit(df_unit, last_n=SEQ_LEN)
+
+    # Sensor multi-plot - show first 6 sensors for clarity
+    sensor_cols = [c for c in feature_cols if c.startswith("sensor_")]
+    sensors_to_plot = sensor_cols[:6] if len(sensor_cols) > 6 else sensor_cols
+    fig = go.Figure(layout=go.Layout(template="plotly_dark"))
+    for s in sensors_to_plot:
+        fig.add_trace(go.Scatter(x=df_unit["cycle"], y=df_unit[s], mode="lines+markers", name=s, hovertemplate="cycle %{x}<br>%{y:.3f}"))
+    fig.update_layout(height=360, margin=dict(l=0, r=0, t=30, b=0), legend=dict(orientation="h"))
+    st.plotly_chart(fig, use_container_width=True)
+
+    # show RUL trend
+    st.subheader("RUL trend (true)")
+    fig2 = px.line(df_unit, x="cycle", y="RUL_clipped" if "RUL_clipped" in df_unit.columns else "RUL", title=f"Unit {unit} RUL over time", template="plotly_dark")
+    st.plotly_chart(fig2, use_container_width=True)
+
+with col2:
+    st.subheader("Prediction panel")
+    st.markdown("**Sequence length used:** " + str(SEQ_LEN))
+    st.markdown(f"**Selected unit:** {unit}")
+    btn = st.button("Predict RUL (send to API)")
+    if btn:
+        try:
+            pred = call_predict_api(seq)
+            st.metric(label="Predicted RUL (cycles)", value=f"{pred:.1f}")
+        except Exception as e:
+            st.error(f"API call failed: {e}")
+
+    st.markdown("### Quick stats")
+    st.write(df_unit.describe().T[["mean","std","min","max"]].head(8))
+
+    # Anomaly detection
+    st.subheader("Anomaly indicators (z-score)")
+    z_thresh = st.slider("Z-score threshold", 2.0, 4.0, 3.0, 0.1)
+    df_anom = compute_anomaly_flags(df_unit, sensor_cols, z_thresh=z_thresh)
+    # show a small table of any recent anomalies
+    anomalies = []
+    for s in sensor_cols:
+        if f"{s}_anomaly" in df_anom.columns:
+            if df_anom[f"{s}_anomaly"].any():
+                idx = df_anom[df_anom[f"{s}_anomaly"]].index[-1]
+                anomalies.append((s, int(df_anom.loc[idx, "cycle"])))
+    if anomalies:
+        st.warning("Recent anomalies detected for sensors:")
+        for s, cyc in anomalies:
+            st.write(f"- **{s}** at cycle {cyc}")
+    else:
+        st.success("No anomalies detected (recent).")
+
+# ----------------------
+# Bottom section: unit-level prediction table and export
+# ----------------------
+st.markdown("---")
+st.subheader("Batch predict multiple units (test set)")
+
+if st.button("Run batch predictions for test set (last cycle per unit)"):
+    df_test = load_dataset_csv(dataset, "test")
+    units = get_units(df_test)
+    results = []
+    with st.spinner("Predicting..."):
+        for u in units:
+            df_u = df_test[df_test["unit"] == u].sort_values("cycle")
+            seq_u, _ = build_sequence_for_unit(df_u, last_n=SEQ_LEN)
+            try:
+                pred = call_predict_api(seq_u)
+            except Exception as e:
+                pred = np.nan
+            true_rul = float(df_u.iloc[-1]["RUL_clipped"] if "RUL_clipped" in df_u.columns else df_u.iloc[-1]["RUL"])
+            results.append({"unit": int(u), "true_rul": true_rul, "pred_rul": pred})
+    df_res = pd.DataFrame(results).sort_values("unit")
+    st.dataframe(df_res)
+    csv = df_res.to_csv(index=False).encode("utf-8")
+    st.download_button("Download results CSV", csv, file_name=f"{dataset}_batch_preds.csv", mime="text/csv")
+
+# ----------------------
+# Footer
+# ----------------------
+st.markdown("<hr>", unsafe_allow_html=True)
+st.markdown("<div style='text-align:center;color:#93c5fd'>Automotive Health Monitoring · Demo · Built with Streamlit</div>", unsafe_allow_html=True)
