@@ -16,6 +16,8 @@ CHECKPOINT_PATH = MODEL_DIR / "lstm_best.pth"
 # load feature names
 FEATURES = joblib.load(FEATURES_PATH)
 INPUT_DIM = len(FEATURES)
+SEQ_LEN = 50  # must match training
+
 
 # model hyperparams must match training
 HIDDEN_DIM = 128
