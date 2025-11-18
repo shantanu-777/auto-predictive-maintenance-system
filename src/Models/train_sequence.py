@@ -143,8 +143,13 @@ def main(args):
                 feat_path = ckpt_dir / "features.joblib"
                 joblib.dump(dataset.get_feature_names(), feat_path)
                 mlflow.log_artifact(str(feat_path), artifact_path="models")
-            else:
-                epochs_no_improve += 1
+            try:
+                norm = {"mean": dataset.mean.tolist(), "std": dataset.std.tolist()}
+                norm_path = ckpt_dir / "norm_stats.joblib"
+                joblib.dump(norm, norm_path)
+                mlflow.log_artifact(str(norm_path), artifact_path="models")
+            except Exception as e:
+                    print("[WARN] Could not save norm stats:", e)
 
             if epochs_no_improve >= args.early_stopping_patience:
                 print("[INFO] Early stopping triggered.")
