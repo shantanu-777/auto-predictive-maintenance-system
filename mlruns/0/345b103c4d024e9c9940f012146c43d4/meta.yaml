@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/user/BMW Projects/auto-predictive-maintenance-system/mlruns/0/345b103c4d024e9c9940f012146c43d4/artifacts
+end_time: 1763545158241
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 345b103c4d024e9c9940f012146c43d4
+run_name: welcoming-sloth-138
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1763545153161
+status: 4
+tags: []
+user_id: user

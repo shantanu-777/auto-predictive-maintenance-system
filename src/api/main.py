@@ -1,36 +1,149 @@
 # src/api/main.py
 import datetime
+import time
+import os
+from pathlib import Path
+from typing import List, Dict, Any
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
-from typing import List, Dict, Any
+from fastapi.staticfiles import StaticFiles
+
 import pandas as pd
 import io
 import joblib
 import numpy as np
+
 from .models import SequenceInput, PredictionResponse
 from .utils import predict_rul, INPUT_DIM, SEQ_LEN  # ensure utils exposes these names
+
 from src.monitoring.anomaly_detection import detect_anomalies_batch
 from src.monitoring.scoring import compute_health_score
-import os
-from pathlib import Path
 from src.monitoring.reporting import generate_score_pdf
+from src.monitoring.inference_logger import log_inference, fetch_recent
+from src.monitoring.drift import compute_input_stats
 
+from mlflow.tracking import MlflowClient
+import mlflow
+
+# -------------------------
+# App + static reports dir
+# -------------------------
 app = FastAPI(title="Automotive Predictive Maintenance API - Extended", version="1.1")
-from fastapi.staticfiles import StaticFiles
-app.mount("/reports", StaticFiles(directory="analysis"), name="reports")
 
+analysis_dir = Path("analysis")
+analysis_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/reports", StaticFiles(directory=str(analysis_dir)), name="reports")
 
+# -------------------------
+# MLflow + model config
+# -------------------------
+MODEL_NAME = os.environ.get("MODEL_NAME", "auto-pm-lstm")
+MODEL_STAGE = os.environ.get("MODEL_STAGE", "None")  # e.g., "Production" or "Staging" or "None"
+MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "file:./mlruns")
+
+mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+mlflow_client = MlflowClient(tracking_uri=MLFLOW_TRACKING_URI)
+
+# -------------------------
+# Root
+# -------------------------
 @app.get("/")
 def root():
     return {"message": "Predictive Maintenance API is running"}
 
 
+# -------------------------
+# Predict endpoint
+# -------------------------
 @app.post("/predict", response_model=PredictionResponse)
 async def predict_rul_api(data: SequenceInput):
+    """
+    Accepts:
+      data.sequence : list[list[float]] (T x F), feature order must match FEATURES used in training.
+      optional: data.unit (if provided by client)
+    Returns:
+      predicted_rul and used_sequence_length
+    """
+    # run inference and measure latency
+    t0 = time.time()
     pred = predict_rul(data.sequence)
-    return PredictionResponse(predicted_rul=pred, used_sequence_length=len(data.sequence))
+    latency_ms = (time.time() - t0) * 1000.0
+
+    # compute simple input stats for drift logging
+    try:
+        seq_np = np.array(data.sequence, dtype=np.float32)
+        input_mean, input_std = compute_input_stats(seq_np)
+    except Exception:
+        input_mean, input_std = None, None
+
+    # resolve model version (best-effort)
+    model_version = "unknown"
+    try:
+        versions = mlflow_client.get_latest_versions(MODEL_NAME, stages=[MODEL_STAGE])
+        if versions:
+            model_version = str(versions[0].version)
+        else:
+            versions = mlflow_client.get_latest_versions(MODEL_NAME)
+            if versions:
+                model_version = str(versions[0].version)
+    except Exception:
+        # ignore errors retrieving from MLflow
+        pass
+
+    # unit if provided
+    unit = getattr(data, "unit", None) if hasattr(data, "unit") else None
+
+    # log inference
+    try:
+        log_inference(
+            unit=unit,
+            dataset=None,
+            model_name=MODEL_NAME,
+            model_version=model_version,
+            latency_ms=latency_ms,
+            prediction=float(pred),
+            input_meta={"mean": input_mean, "std": input_std},
+            notes=None,
+        )
+    except Exception as e:
+        print("[WARN] inference log failed:", e)
+
+    return PredictionResponse(predicted_rul=float(pred), used_sequence_length=len(data.sequence))
 
 
+# -------------------------
+# Model version endpoint
+# -------------------------
+@app.get("/model/version")
+def model_version():
+    try:
+        versions = mlflow_client.get_latest_versions(MODEL_NAME)
+        if not versions:
+            return {"model_name": MODEL_NAME, "version": None}
+        latest = versions[0]
+        return {"model_name": MODEL_NAME, "version": latest.version, "stage": latest.current_stage}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# -------------------------
+# Recent inference logs endpoint
+# -------------------------
+@app.get("/inference_logs")
+def recent_inferences(limit: int = 100):
+    try:
+        rows = fetch_recent(limit=limit)
+        keys = ["id", "ts_iso", "unit", "dataset", "model_name", "model_version", "latency_ms", "prediction"]
+        result = [dict(zip(keys, r)) for r in rows]
+        return {"count": len(result), "rows": result}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# -------------------------
+# Score endpoint (upload CSV -> anomalies, RUL, health score, PDF)
+# -------------------------
 @app.post("/score")
 async def score_upload(
     file: UploadFile = File(...),
@@ -44,7 +157,7 @@ async def score_upload(
     """
     Accepts a CSV file upload (containing unit, cycle, sensor_* columns).
     Runs per-unit prediction (last cycle) + anomaly detection + health scoring.
-    Returns JSON with per-unit summaries.
+    Returns JSON with per-unit summaries and paths to saved artifacts (CSV + PDF).
     """
     # read CSV
     contents = await file.read()
@@ -72,7 +185,7 @@ async def score_upload(
         df, sensor_cols=sensor_cols, window=z_window, z_thresh=z_thresh, mad_thresh=mad_thresh
     )
 
-    # prepare analysis directory
+    # prepare analysis directory for this run
     analysis_root = Path("analysis")
     run_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = analysis_root / f"score_{run_ts}"
@@ -81,15 +194,16 @@ async def score_upload(
     results = []
     anomalies_map_for_report: Dict[int, Dict[str, Any]] = {}
 
+    # iterate units
     for unit, info in anomalies.items():
         flagged_df = info.get("flagged_df")
         summary = info.get("summary", {})  # total_anomalies, per_sensor, recent_anomalies
 
         if flagged_df is None or flagged_df.empty:
-            # nothing to analyze for this unit
+            # skip
             continue
 
-        # build sequence for last cycles using same logic as dashboard/utils
+        # select features
         feat_cols = [
             c
             for c in flagged_df.columns
@@ -158,7 +272,7 @@ async def score_upload(
 
         anomalies_map_for_report[int(unit)] = {"flagged_df": flagged_df, "summary": summary}
 
-    # sort by health ascending (worst first)
+    # sort by health ascending (worst first), placing None at the end
     results = sorted(results, key=lambda x: (x["health_score"] is None, x["health_score"]))
 
     # save scored CSV

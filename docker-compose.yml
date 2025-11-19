@@ -1,0 +1,46 @@
+version: "3.8"
+services:
+  mlflow:
+    image: python:3.10-slim
+    container_name: mlflow
+    command: bash -lc "pip install mlflow && mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root /mlruns --host 0.0.0.0 --port 5000"
+    working_dir: /app
+    volumes:
+      - ./mlruns:/mlruns
+      - ./mlflow.db:/mlflow.db
+    ports:
+      - "5000:5000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: auto_pm_api
+    depends_on:
+      - mlflow
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MODEL_NAME=auto-pm-lstm
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - ./:/app
+    ports:
+      - "8000:8000"
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: auto_pm_dashboard
+    depends_on:
+      - api
+    environment:
+      - PYTHONUNBUFFERED=1
+      - API_URL=http://api:8000/predict
+    volumes:
+      - ./:/app
+    command: bash -lc "pip install streamlit plotly && streamlit run dashboards/app.py --server.port 8501 --server.address 0.0.0.0"
+    ports:
+      - "8501:8501"

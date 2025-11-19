@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/user/BMW Projects/auto-predictive-maintenance-system/mlruns/0/10e05e761aca4df3bf97c58f389ab61c/artifacts
+end_time: 1763544983908
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 10e05e761aca4df3bf97c58f389ab61c
+run_name: bustling-lark-148
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1763544973190
+status: 4
+tags: []
+user_id: user

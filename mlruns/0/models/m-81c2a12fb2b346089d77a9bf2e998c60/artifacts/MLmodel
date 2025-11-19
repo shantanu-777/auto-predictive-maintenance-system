@@ -1,0 +1,34 @@
+artifact_path: file:///C:/Users/user/BMW Projects/auto-predictive-maintenance-system/mlruns/0/models/m-81c2a12fb2b346089d77a9bf2e998c60/artifacts
+flavors:
+  python_function:
+    config:
+      device: null
+    data: data
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.pytorch
+    pickle_module_name: mlflow.pytorch.pickle_module
+    python_version: 3.12.3
+  pytorch:
+    code: null
+    model_data: data
+    pytorch_version: 2.9.1+cpu
+is_signature_from_type_hint: false
+mlflow_version: 3.6.0
+model_id: m-81c2a12fb2b346089d77a9bf2e998c60
+model_size_bytes: 907094
+model_uuid: m-81c2a12fb2b346089d77a9bf2e998c60
+prompts: null
+run_id: 345b103c4d024e9c9940f012146c43d4
+saved_input_example_info:
+  artifact_path: input_example.json
+  serving_input_path: serving_input_example.json
+  type: ndarray
+signature:
+  inputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float32", "shape": [-1, 50,
+    24]}}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float64", "shape": [-1]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2025-11-19 09:39:13.293396'

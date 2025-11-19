@@ -18,6 +18,7 @@ st.set_page_config(page_title="Automotive Health Monitoring", layout="wide", ini
 ROOT = Path.cwd()
 PROC_DIR = ROOT / "data" / "processed" / "for_model"
 API_URL = "http://127.0.0.1:8000/predict"   # change if your API is hosted elsewhere
+API_BASE = API_URL.replace("/predict", "")
 SEQ_LEN = 50  # must match model training
 
 DARK_BG = "#0f1720"
@@ -43,7 +44,7 @@ def load_dataset_csv(dataset: str, kind: str = "test") -> pd.DataFrame:
 def get_units(df: pd.DataFrame) -> List[int]:
     return sorted(df["unit"].unique())
 
-def build_sequence_for_unit(df_unit: pd.DataFrame, last_n: int = SEQ_LEN) -> np.ndarray:
+def build_sequence_for_unit(df_unit: pd.DataFrame, last_n: int = SEQ_LEN) -> Tuple[np.ndarray, List[str]]:
     df_unit = df_unit.sort_values("cycle").reset_index(drop=True)
     feature_cols = [c for c in df_unit.columns if (c.startswith("op_setting") or c.startswith("sensor_") or "_mean" in c or "_std" in c or "_min" in c or "_max" in c)]
     seq = df_unit[feature_cols].to_numpy(dtype=np.float32)
@@ -76,20 +77,81 @@ def compute_anomaly_flags(df_unit: pd.DataFrame, sensor_cols: List[str], z_thres
 st.sidebar.markdown("<h2 style='color: white;'>Automotive Health Dashboard</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-datasets = list_datasets(PROC_DIR)
-dataset = st.sidebar.selectbox("Select dataset", datasets, index=0)
-mode = st.sidebar.radio("Mode", ["Explore test set", "Upload CSV (simulate)"])
+# Top-level page selector
+page = st.sidebar.selectbox("Page", ["Main", "Monitoring"])
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**Model API**")
-st.sidebar.write(f"`{API_URL}`")
-if st.sidebar.button("Change API URL"):
-    new = st.sidebar.text_input("New API URL", value=API_URL)
-    if new:
-        st.experimental_set_query_params(api=new)
+
+# Only show these dataset/model controls on Main page
+if page == "Main":
+    try:
+        datasets = list_datasets(PROC_DIR)
+    except Exception:
+        datasets = []
+    dataset = st.sidebar.selectbox("Select dataset", datasets, index=0 if datasets else -1)
+    mode = st.sidebar.radio("Mode", ["Explore test set", "Upload CSV (simulate)"])
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Model API**")
+    st.sidebar.write(f"`{API_URL}`")
+    if st.sidebar.button("Change API URL"):
+        new = st.sidebar.text_input("New API URL", value=API_URL)
+        if new:
+            st.experimental_set_query_params(api=new)
 
 # ----------------------
-# Main layout
+# Monitoring page
+# ----------------------
+if page == "Monitoring":
+    st.title("System Monitoring")
+    st.markdown("This page shows recent inference logs (latency, model version, prediction) collected by the API.")
+
+    @st.cache_data(ttl=30)
+    def fetch_logs(limit: int = 500):
+        try:
+            resp = requests.get(f"{API_BASE}/inference_logs", params={"limit": limit}, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            return {"error": str(e), "count": 0, "rows": []}
+
+    with st.spinner("Loading logs..."):
+        logs_json = fetch_logs(limit=500)
+
+    if "error" in logs_json:
+        st.error(f"Could not fetch logs: {logs_json['error']}")
+    else:
+        rows = logs_json.get("rows", [])
+        if not rows:
+            st.info("No inference logs available yet (make some predictions to populate).")
+        else:
+            df_logs = pd.DataFrame(rows)
+            # Normalize column types
+            if "latency_ms" in df_logs.columns:
+                df_logs["latency_ms"] = pd.to_numeric(df_logs["latency_ms"], errors="coerce")
+            if "prediction" in df_logs.columns:
+                df_logs["prediction"] = pd.to_numeric(df_logs["prediction"], errors="coerce")
+
+            st.subheader("Recent Inference Logs")
+            st.dataframe(df_logs, use_container_width=True)
+
+            st.subheader("Latency (ms) — recent requests")
+            st.line_chart(df_logs["latency_ms"].fillna(0))
+
+            st.subheader("Prediction distribution (recent)")
+            fig_pred = px.histogram(df_logs, x="prediction", nbins=30, title="Prediction distribution", template="plotly_dark")
+            st.plotly_chart(fig_pred, use_container_width=True)
+
+            st.subheader("Latency distribution")
+            fig_lat = px.histogram(df_logs, x="latency_ms", nbins=50, title="Latency distribution (ms)", template="plotly_dark")
+            st.plotly_chart(fig_lat, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("Tip: run predictions from the Main page (or via the API) to populate logs.")
+    st.stop()  # stop here so Main UI isn't rendered below
+
+# ----------------------
+# Main layout (unchanged UI)
 # ----------------------
 st.markdown(f"<div style='background:{CARD_BG}; padding: 12px; border-radius: 8px'>"
             f"<h1 style='color: {ACCENT}; margin: 0'>Automotive Health Monitoring — {dataset}</h1>"
@@ -193,6 +255,7 @@ if st.button("Run batch predictions for test set (last cycle per unit)"):
     st.dataframe(df_res)
     csv = df_res.to_csv(index=False).encode("utf-8")
     st.download_button("Download results CSV", csv, file_name=f"{dataset}_batch_preds.csv", mime="text/csv")
+
 # ----------------------
 # Score Upload & Engine Health (BMW Industrial Pro)
 # Insert this AFTER the batch predict section in dashboards/app.py
