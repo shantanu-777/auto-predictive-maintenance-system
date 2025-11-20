@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/user/BMW Projects/auto-predictive-maintenance-system/mlruns/0/7cecc141b8f84418a6c1495e9fe179fc/artifacts
+end_time: 1763623017845
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 7cecc141b8f84418a6c1495e9fe179fc
+run_name: resilient-fish-572
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1763623006175
+status: 3
+tags: []
+user_id: user

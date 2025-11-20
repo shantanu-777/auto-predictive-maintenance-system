@@ -1,0 +1,10 @@
+artifact_location: file:///C:/Users/user/BMW Projects/auto-predictive-maintenance-system/mlruns/0/models/m-a03a668f23c5407ebc1b065d73515667/artifacts
+creation_timestamp: 1763623006265
+experiment_id: '0'
+last_updated_timestamp: 1763623017758
+model_id: m-a03a668f23c5407ebc1b065d73515667
+model_type: null
+name: model
+source_run_id: 7cecc141b8f84418a6c1495e9fe179fc
+status: 2
+status_message: null
