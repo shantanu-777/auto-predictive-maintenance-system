@@ -44,21 +44,32 @@ Production-style inference logging (SQLite)
 
 
 📁 Repository Structure
-.
-├── data/                          # (ignored) raw & processed datasets
-├── models/                        # (ignored) model artifacts & checkpoints
-├── mlruns/                        # (ignored) MLflow experiment storage
+📦 auto-predictive-maintenance-system
+│
+├── data/
+│   ├── raw/                # raw datasets (ignored)
+│   └── processed/          # feature-engineered data
+│
+├── models/
+│   ├── sequence/FD001/     # model checkpoints, features, norm stats
+│
+├── mlruns/                 # MLflow experiment + model registry (ignored)
+│
 ├── src/
-│   ├── api/                       # FastAPI inference service
-│   ├── data_processing/           # loader, preprocessing, feature engineering
-│   ├── dashboards/                # Streamlit app (app.py)
-│   ├── monitoring/                # registry, logger, reporting, drift detection
-│   └── models/                    # training scripts, sequence dataset, helpers
-├── dashboards/                    # Streamlit entry point
-├── notebooks/                     # analysis & training notebooks
-├── analysis/                      # generated reports (PDF + CSV)
+│   ├── api/                # FastAPI inference service
+│   ├── data_processing/    # preprocessing & feature engineering
+│   ├── Models/             # LSTM, datasets, XGBoost, training scripts
+│   └── monitoring/         # drift, anomaly, logging, report generator
+│
+├── dashboards/
+│   └── app.py              # Streamlit dashboard
+│
+├── analysis/               # Generated reports (PDF + CSV)
+├── notebooks/              # Training & research notebooks
+│
 ├── requirements.txt
 └── README.md
+
 
 ⚙️ Setup & Installation
 
