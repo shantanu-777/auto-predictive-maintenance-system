@@ -45,6 +45,7 @@ Production-style inference logging (SQLite)
 
 📁 Repository Structure
 📦 auto-predictive-maintenance-system
+~~~
 │
 ├── data/
 │   ├── raw/                # raw datasets (ignored)
@@ -70,18 +71,20 @@ Production-style inference logging (SQLite)
 ├── requirements.txt
 └── README.md
 
-
+~~~
 ⚙️ Setup & Installation
 
 Run all commands from the repository root.
 
 1. Create & activate virtualenv
+~~~
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-
-2. Install dependencies
+~~~
+3. Install dependencies
+~~~
 pip install -r requirements.txt
-
+~~~
 📊 Data Pipeline
 
 The complete preprocessing pipeline includes:
@@ -99,11 +102,11 @@ Sequence creation for LSTM
 Dataset splitting for FD001–FD004
 
 Scripts (located in src/data_processing/):
-
+~~~
 python src/data_processing/loader.py
 python src/data_processing/preprocessing.py
 python src/data_processing/feature_engineering.py
-
+~~~
 
 Processed datasets stored in:
 
@@ -111,11 +114,13 @@ data/processed/for_model/
 
 🤖 Model Training
 1. Train XGBoost baseline
+~~~
 python src/models/xgboost_train.py --proc_dir data/processed/for_model --datasets FD001
-
-2. Train LSTM model
+~~~
+3. Train LSTM model
+~~~
 python src/models/train_sequence.py --proc_dir data/processed/for_model --dataset FD001 --seq_len 50 --batch_size 64 --epochs 40 --use_cuda
-
+~~~
 
 Resulting artifacts stored in:
 
@@ -124,10 +129,10 @@ models/sequence/FD001/
 🧾 Register the Model (MLflow)
 
 Set env variables:
-
+~~~
 $env:MLFLOW_TRACKING_URI = "file:./mlruns"
 $env:PYTHONPATH = "$PWD\src"
-
+~~~
 
 Register:
 
